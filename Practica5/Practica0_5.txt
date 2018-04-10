@@ -1,0 +1,217 @@
+Una función para hacer que un programa termine de ejecutarse
+Capture el siguiente código fuente en un archivo llamado salir.s:
+
+#PURPOSE: Simple program that exits and returns a
+# status code back to the Linux kernel
+#
+#INPUT: a status code
+#
+#OUTPUT: returns a status code. This can be viewed by typing
+#
+# echo $?                    # after running the program
+#
+#VARIABLES:
+# %eax holds the system call number
+# %ebx holds the return status
+#
+.section .data
+
+.section .text
+.globl salir
+salir:
+pushl %ebp
+movl %esp,%ebp
+movl 8(%ebp),%ebx                  # lee el \’unico argumento de esta funci\’on
+
+movl $1,%eax	                         # this is the linux kernel command 
+                                                  # number (system call) for exiting
+                                                  # a program
+int $0x80                                   # this wakes up the kernel to run
+		                        # the exit command
+
+
+Una versión de la función int putc(unsigned int fd,unsigned int ch)
+El segundo programa a capturar es una función que hará uso de la llamada al systema write de Linux para escribir algo a la salida estándar. Capturelo en un archivo llamado putc.s
+#
+# This program is based on 
+#; N A M E : x p u t c h a r . a s m
+#; D E S C : putchar() by assembly
+#; A U T H : Wataru Nishida, M.D., Ph.D.
+#;           wnishida@skyfree.org
+#;           http://www.skyfree.org
+# Taken from the web page:
+# http://lsi.ugr.es/jagomez/sisopi_archivos/HolaMundo.htm
+# visited on Sunday August 6, 2017.
+#;
+#;     p u t c      
+#;
+#;       int  putc (unsigned int fd,unsigned int ch)
+#;
+#;       --- return one (success) or -1 (error)  
+#;
+.code32		# Use 32bit mode.
+.section .text		# Code must resides in the ".text" in GCC.
+.globl putc		# Declare putc() as a public function.
+putc:
+pushl %ebp		# Remember %ebp.
+movl %esp,%ebp          # Prepare my stack frame.
+			# Now, (%ebp) points saved %ebp,
+			# and 4(%ebp) points return address.
+# [ NOTE ] We must preserve registers except %eax, %ecx, and %edx.
+pushl %ebx		# Save EBX.
+# [ NOTE ] 1st argument appears in 8(%ebp), and 2nd 12(%ebp) ...
+
+movl 12(%ebp),%eax	# Get character code. (2nd argument)
+movb %al,(msgbuf)	# And save it.
+movl $1,%edx		# Set character count.
+movl $msgbuf,%ecx	# Set buffer pointer.
+#movl $1,%ebx		# Set STDOUT.
+movl 8(%ebp),%ebx	# Get file descriptor and set STDOUT. (1st argument)
+movl $4,%eax		# Call sys_write().
+int $0x80
+
+popl %ebx                      # Recover %ebx.
+
+movl %ebp,%esp           # Perform %esp=%ebp
+popl %ebp                      # and EBP=pop().
+ret
+
+# [ NOTE ] Storage area for the variables starts from here.
+.section .data		# Variables must reside in the ".data" in GCC.
+msgbuf:
+.byte 0			# Message buffer.
+
+
+Un archivo de cabecera (types.h tomado prestado de xv6)
+El siguiente archivo capturelo y guardelo en types.h:
+
+#ifndef _TYPES_H
+#define _TYPES_H
+typedef unsigned int	uint;
+#endif /* _TYPES_H */
+
+
+Archivo de implementación de la función printf() (printf.c tomado prestado de xv6)
+Capture el siiguiente código fuente en el archivo printf.c
+
+#include "types.h"
+int fd=1;
+//static void                   /*Esta es la función putc(int fd,char c) que utilizan en xv6*/
+//putc(int fd, char c)
+//{
+//  write(fd, &c, 1);
+//}
+extern int putc(unsigned int fd, char c);
+
+static void
+printint(int fd, int xx, int base, int sgn)
+{
+    static char digits[] = "0123456789ABCDEF";
+    char buf[16];
+    int i, neg;
+    uint x;
+
+    neg = 0;
+    if(sgn && xx < 0){
+      neg = 1;
+      x = -xx;
+    } else {
+      x = xx;
+    }
+
+    i = 0;
+    do{
+      buf[i++] = digits[x % base];
+    }while((x /= base) != 0);
+    if(neg)
+      buf[i++] = '-';
+
+    while(--i >= 0)
+      putc(fd, buf[i]);
+}
+
+// print to the given fd. Only understands %d.
+void printf(char *fmt, ...)
+{
+    char *s;
+    int c, i, state;
+    uint *ap;
+
+    state = 0;
+    ap = (uint*)(void*)&fmt + 1;
+    for(i = 0; fmt[i]; i++){
+        c = fmt[i] & 0xff;
+        if(state == 0){
+            if(c == '%'){
+              state = '%';
+            } else {
+              putc(fd, c);
+            }
+        } else if(state == '%'){
+        if(c == 'd'){
+            printint(fd, *ap, 10, 1);
+           ap++;
+        }
+        else {
+        // Unknown % sequence.  Print it to draw attention.
+            putc(fd, '%');
+            putc(fd, c);
+        }
+        state = 0;
+    }
+  }//end for()
+}//end printf()
+
+Por último escribiremos un driver de prueba para hacer uso de nuestra primera versión de la función printf().
+
+/*
+  TestPrintf.c - driver para usar la funcion
+  void printf(char*, ...)
+ */
+
+/*#include <stdio.h>*/
+
+extern void printf(int fd,char *fmt,...);
+extern void salir(int status);
+
+int main(){
+  printf(1,"Viernes %d de febrero de %d.\n",16,2018);
+
+  salir(0xff);
+}/*end main()*/
+
+
+A continuación se incluye un archivo Makefile para ayudar a que la construcción y prueba de esta práctica sea más rápida. Capture estas líneas y guárdelas en un archivo llamado Makefile
+
+AS=as
+CC=gcc
+LD=ld
+
+ASFLAGS=--32
+CFLAGS=-fno-stack-protector -fno-builtin -m32 -c
+LDFLAGS=-m elf_i386 -s -e main 
+
+BIN=testprintf
+
+all:$(BIN)
+
+$(BIN):TestPrintf.o salir.o putc.o printf.o
+	$(LD) $(LDFLAGS) $^ -o $@
+
+TestPrintf.o:TestPrintf.c
+	$(CC) $(CFLAGS) $< -o $@
+
+printf.o:printf.c
+	$(CC) $(CFLAGS) $< -o $@
+
+salir.o:salir.s
+	$(AS) $(ASFLAGS) $< -o $@
+
+putc.o:putc.s
+	$(AS) $(ASFLAGS) $< -o $@
+
+clean:
+	rm -v *.o $(BIN)
+
+Una vez que usted tenga capturados todos los archivos mencionados, para construir el programa ejecutable  testprintf lo único que se necesita hacer es teclear el comando:
+make
